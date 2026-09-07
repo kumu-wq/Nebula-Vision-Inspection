@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+    <title>Nebula Vision Inspection</title>
+</head>
+
+<body>
+
+```
+<h1>Nebula Vision Inspection</h1>
+
+<h2>Camera</h2>
+
+<video id="camera" width="640" height="480" autoplay></video>
+
+<br><br>
+
+<button onclick="startCamera()">Start Camera</button>
+<button onclick="captureImage()">Capture Image</button>
+
+<h2>Captured Image</h2>
+
+<canvas id="canvas" width="640" height="480"></canvas>
+<h2>Calibration</h2>
+
+<label>
+    Reference length (mm):
+</label>
+
+<input type="number" id="referenceMM" value="20">
+
+<br><br>
+
+<label>
+    Reference length (pixels):
+</label>
+
+<input type="number" id="referencePixels" value="200">
+
+<br><br>
+
+<button onclick="calibrate()">Calculate Calibration</button>
+
+<h3 id="calibrationResult">
+    Calibration not calculated
+</h3>
+<h2>Component Inspection</h2>
+
+<label>Select Component:</label>
+
+<select id="componentType">
+    <option value="bolt">Bolt</option>
+    <option value="nut">Nut</option>
+    <option value="washer">Washer</option>
+    <option value="plate">Plate</option>
+</select>
+
+<br><br>
+
+<label>Expected Length (mm):</label>
+<input type="number" id="expectedLength" value="10">
+
+<br><br>
+
+<label>Tolerance (mm):</label>
+<input type="number" id="tolerance" value="1">
+
+<br><br>
+
+<h2>Measurement</h2>
+
+<label>Object length (pixels):</label>
+<input type="number" id="objectPixels" value="50">
+
+<br><br>
+
+<button onclick="measureObject()">Measure Object</button>
+<button onclick="automaticMeasure()">
+    Automatic Measure
+</button>
+<h3 id="measurementResult">
+    Measurement not calculated
+</h3>
+<div id="inspectionResult">
+
+    <h3>Inspection Result</h3>
+
+    <p>
+        <strong>Component:</strong>
+        <span id="resultComponent">Not selected</span>
+    </p>
+
+    <p>
+        <strong>Measured Length:</strong>
+        <span id="resultMeasured">--</span> mm
+    </p>
+
+    <p>
+        <strong>Expected Length:</strong>
+        <span id="resultExpected">--</span> mm
+    </p>
+
+    <p>
+        <strong>Tolerance:</strong>
+        ±<span id="resultTolerance">--</span> mm
+    </p>
+
+    <p id="washerMeasurements" style="display: none;">
+
+        <strong>Outer Diameter:</strong>
+        <span id="outerDiameter">--</span> mm
+
+        <br>
+
+        <strong>Inner Diameter:</strong>
+        <span id="innerDiameter">--</span> mm
+
+    </p>
+
+    <h2 id="resultStatus">Inspection not performed</h2>
+
+    <p id="resultReason"></p>
+
+    <p>
+    <strong>Defect Check:</strong>
+    <span id="defectResult">Not checked</span>
+</p>
+
+</div>
+<br>
+
+<button onclick="generatePDF()">
+    Generate PDF Report
+</button>
+
+<script>
+
+    let video = document.getElementById("camera");
+    let canvas = document.getElementById("canvas");
+    let context = canvas.getContext("2d");
+
+    async function startCamera() {
+
+        try {
+
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true
+            });
+
+            video.srcObject = stream;
+
+        } catch (error) {
+
+            console.log(error);
+            alert("Camera access failed: " + error);
+
+        }
+
+    }
+
+    function captureImage() {
+
+        context.drawImage(
+            video,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+        );
+
+    }
+function calibrate() {
+
+    const referenceMM =
+        parseFloat(document.getElementById("referenceMM").value);
+
+    const referencePixels =
+        parseFloat(document.getElementById("referencePixels").value);
+
+    if (referenceMM <= 0 || referencePixels <= 0) {
+        alert("Please enter valid values.");
+        return;
+    }
+
+    const pixelsPerMM =
+        referencePixels / referenceMM;
+
+    document.getElementById("calibrationResult").innerText =
+        "Calibration: " +
+        pixelsPerMM.toFixed(2) +
+        " pixels/mm";
+}
+
+function measureObject() {
+
+    const objectPixels =
+        parseFloat(document.getElementById("objectPixels").value);
+
+    const referenceMM =
+        parseFloat(document.getElementById("referenceMM").value);
+
+    const referencePixels =
+        parseFloat(document.getElementById("referencePixels").value);
+
+    if (objectPixels <= 0) {
+        alert("Please enter a valid object size.");
+        return;
+    }
+
+    const pixelsPerMM =
+        referencePixels / referenceMM;
+
+    const objectMM =
+        objectPixels / pixelsPerMM;
+
+    document.getElementById("measurementResult").innerText =
+        "Object length: " +
+        objectMM.toFixed(2) +
+        " mm";
+}
+function automaticMeasure() {
+
+    if (typeof cv === "undefined") {
+        alert("OpenCV is not ready yet.");
+        return;
+    }
+
+    // Read captured image from canvas
+    let src = cv.imread("canvas");
+
+    // Convert image to grayscale
+    let gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    // Reduce noise
+    let blurred = new cv.Mat();
+    cv.GaussianBlur(
+        gray,
+        blurred,
+        new cv.Size(5, 5),
+        0
+    );
+
+    // Detect edges
+    let edges = new cv.Mat();
+    cv.Canny(blurred, edges, 50, 150);
+
+    // Find contours
+    let contours = new cv.MatVector();
+    let hierarchy = new cv.Mat();
+
+    cv.findContours(
+        edges,
+        contours,
+        hierarchy,
+        cv.RETR_EXTERNAL,
+        cv.CHAIN_APPROX_SIMPLE
+    );
+
+    let largestArea = 0;
+    let largestContour = null;
+
+    // Find largest object
+    for (let i = 0; i < contours.size(); i++) {
+
+        let contour = contours.get(i);
+
+        let area = cv.contourArea(contour);
+
+        if (area > largestArea) {
+            largestArea = area;
+            largestContour = contour;
+        }
+    }
+
+    if (largestContour === null) {
+        alert("No object detected.");
+        src.delete();
+        gray.delete();
+        blurred.delete();
+        edges.delete();
+        contours.delete();
+        hierarchy.delete();
+        return;
+    }
+
+    // Get bounding rectangle
+    let rect = cv.boundingRect(largestContour);
+
+    let objectWidthPixels = rect.width;
+    let objectHeightPixels = rect.height;
+
+    console.log("Detected width:", objectWidthPixels);
+    console.log("Detected height:", objectHeightPixels);
+
+    // Calibration
+    let referenceMM =
+        parseFloat(document.getElementById("referenceMM").value);
+
+    let referencePixels =
+        parseFloat(document.getElementById("referencePixels").value);
+
+    if (referenceMM <= 0 || referencePixels <= 0) {
+        alert("Please enter valid calibration values.");
+        return;
+    }
+
+    // Calculate pixels per millimeter
+    let pixelsPerMM =
+        referencePixels / referenceMM;
+
+    // Convert pixels to millimeters
+    let objectWidthMM =
+        objectWidthPixels / pixelsPerMM;
+
+    let objectHeightMM =
+        objectHeightPixels / pixelsPerMM;
+    // Washer measurement
+    let holeDiameterMM = 0;
+
+    if (document.getElementById("componentType").value === "washer") {
+
+        let circles = new cv.Mat();
+
+        cv.HoughCircles(
+            gray,
+            circles,
+            cv.HOUGH_GRADIENT,
+            1,
+            20,
+            100,
+            30,
+            5,
+            200
+        );
+
+        if (circles.cols > 0) {
+
+            let maxRadius = 0;
+
+            for (let i = 0; i < circles.cols; i++) {
+
+                let radius = circles.data32F[i * 3 + 2];
+
+                if (radius > maxRadius) {
+                    maxRadius = radius;
+                }
+            }
+
+            holeDiameterMM =
+                (maxRadius * 2) / pixelsPerMM;
+
+            console.log(
+                "Detected hole diameter:",
+                holeDiameterMM.toFixed(2),
+                "mm"
+            );
+        }
+
+        circles.delete();
+    }
+
+    document.getElementById("measurementResult").innerText =
+        "Automatic measurement:\n" +
+        "Width: " + objectWidthMM.toFixed(2) + " mm\n" +
+        "Height: " + objectHeightMM.toFixed(2) + " mm";
+        // Show washer measurements
+    let washerMeasurements =
+        document.getElementById("washerMeasurements");
+
+    if (document.getElementById("componentType").value === "washer") {
+
+        washerMeasurements.style.display = "block";
+
+        document.getElementById("outerDiameter").innerText =
+            Math.max(objectWidthMM, objectHeightMM).toFixed(2);
+
+        document.getElementById("innerDiameter").innerText =
+            holeDiameterMM.toFixed(2);
+
+    } else {
+
+        washerMeasurements.style.display = "none";
+    }
+    // Inspection
+    let expectedLength =
+        parseFloat(document.getElementById("expectedLength").value);
+
+    let tolerance =
+        parseFloat(document.getElementById("tolerance").value);
+
+    let measuredLength = objectHeightMM;
+
+    let lowerLimit = expectedLength - tolerance;
+    let upperLimit = expectedLength + tolerance;
+
+    let component =
+        document.getElementById("componentType").value;
+
+    document.getElementById("resultComponent").innerText =
+        component.toUpperCase();
+
+    document.getElementById("resultMeasured").innerText =
+        measuredLength.toFixed(2);
+
+    document.getElementById("resultExpected").innerText =
+        expectedLength.toFixed(2);
+
+    document.getElementById("resultTolerance").innerText =
+        tolerance.toFixed(2);
+
+    if (measuredLength >= lowerLimit &&
+        measuredLength <= upperLimit) {
+
+        document.getElementById("resultStatus").innerText =
+            "PASS";
+
+        document.getElementById("resultReason").innerText =
+            "Measured dimension is within the acceptable tolerance.";
+
+    } else {
+
+        document.getElementById("resultStatus").innerText =
+            "FAIL";
+
+        document.getElementById("resultReason").innerText =
+            "Measured dimension is outside the acceptable tolerance.";
+    }
+
+        // Basic defect inspection
+
+    let selectedComponent =
+        document.getElementById("componentType").value;
+
+    let defectResult =
+        document.getElementById("defectResult");
+
+    if (selectedComponent === "nut" ||
+        selectedComponent === "washer") {
+
+        let holeContours = new cv.MatVector();
+        let holeHierarchy = new cv.Mat();
+
+        cv.findContours(
+            edges,
+            holeContours,
+            holeHierarchy,
+            cv.RETR_CCOMP,
+            cv.CHAIN_APPROX_SIMPLE
+        );
+
+        let holeCount = 0;
+
+        for (let i = 0; i < holeContours.size(); i++) {
+
+            let contour = holeContours.get(i);
+            let area = cv.contourArea(contour);
+
+            if (area > 50) {
+                holeCount++;
+            }
+
+            contour.delete();
+        }
+
+        if (holeCount >= 1) {
+
+            defectResult.innerText =
+                "Hole detected - No obvious missing-hole defect";
+
+        } else {
+
+            defectResult.innerText =
+                "Possible missing-hole defect";
+        }
+
+        holeContours.delete();
+        holeHierarchy.delete();
+
+    } else {
+
+        defectResult.innerText =
+            "Basic dimensional inspection only";
+    }
+    // Cleanup OpenCV memory
+    src.delete();
+    gray.delete();
+    blurred.delete();
+    edges.delete();
+    contours.delete();
+    hierarchy.delete();
+}
+
+function generatePDF() {
+
+    const { jsPDF } = window.jspdf;
+
+    let pdf = new jsPDF();
+
+    // Get inspection values
+    let component =
+        document.getElementById("resultComponent").innerText;
+
+    let measured =
+        document.getElementById("resultMeasured").innerText;
+
+    let expected =
+        document.getElementById("resultExpected").innerText;
+
+    let tolerance =
+        document.getElementById("resultTolerance").innerText;
+
+    let status =
+        document.getElementById("resultStatus").innerText;
+
+    let reason =
+        document.getElementById("resultReason").innerText;
+
+    let defect =
+        document.getElementById("defectResult").innerText;
+
+    // PDF title
+    pdf.setFontSize(20);
+    pdf.text("NEBULA AI VISION INSPECTION", 20, 25);
+
+    pdf.setFontSize(14);
+    pdf.text("Inspection Report", 20, 40);
+
+    // Inspection details
+    pdf.setFontSize(12);
+
+    pdf.text("Component: " + component, 20, 60);
+
+    pdf.text(
+        "Measured Length: " + measured + " mm",
+        20,
+        75
+    );
+
+    pdf.text(
+        "Expected Length: " + expected + " mm",
+        20,
+        90
+    );
+
+    pdf.text(
+        "Tolerance: +/- " + tolerance + " mm",
+        20,
+        105
+    );
+
+    pdf.text(
+        "Defect Check: " + defect,
+        20,
+        120
+    );
+
+    pdf.text(
+        "Result: " + status,
+        20,
+        140
+    );
+
+    pdf.text(
+        "Reason: " + reason,
+        20,
+        155
+    );
+
+    // Date and time
+    let date = new Date();
+
+    pdf.text(
+        "Inspection Date: " + date.toLocaleString(),
+        20,
+        175
+    );
+
+    // Add captured image
+    let canvas = document.getElementById("canvas");
+
+    if (canvas) {
+
+        let imageData = canvas.toDataURL("image/jpeg", 0.8);
+
+        pdf.text("Captured Component:", 20, 195);
+
+        pdf.addImage(
+            imageData,
+            "JPEG",
+            20,
+            205,
+            100,
+            75
+        );
+    }
+
+    // Save PDF
+    pdf.save("Nebula_Inspection_Report.pdf");
+}
+
+</script>
+```
+<script>
+    window.Module = {
+        onRuntimeInitialized: function () {
+            console.log("OpenCV.js is ready!");
+        }
+    };
+</script>
+
+<script src="https://docs.opencv.org/4.x/opencv.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</body>
+</html>
